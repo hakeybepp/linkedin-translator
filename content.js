@@ -94,8 +94,10 @@ async function analyzeAndReplace(post) {
     if (!textEl) return;
     if (cached.verdict === 'bullshit') {
       applyRewrite(post, cached.rewrite, cached.originalHTML, textEl);
+    } else if (cached.verdict === 'mixed') {
+      applySummary(post, `⚠️ ${cached.score}/100 — MIXED — ${cached.summary}`, textEl, '#b35c00', '#fff8f0', '#b35c00');
     } else {
-      applySummary(post, cached.summary, textEl);
+      applySummary(post, `✓ ${cached.score}/100 — LEGIT — ${cached.summary}`, textEl, '#0a8a3c', '#f0f7f0', '#0a8a3c');
     }
     return;
   }
@@ -123,15 +125,17 @@ async function analyzeAndReplace(post) {
       return;
     }
 
-    const { verdict, rewrite, summary } = response.result;
-    cache.set(postId, { verdict, rewrite, summary, originalHTML });
+    const { verdict, score, rewrite, summary } = response.result;
+    cache.set(postId, { verdict, score, rewrite, summary, originalHTML });
 
     if (btn) btn.remove();
 
     if (verdict === 'bullshit') {
       applyRewrite(post, rewrite, originalHTML, textEl);
+    } else if (verdict === 'mixed') {
+      applySummary(post, `⚠️ ${score}/100 — MIXED — ${summary}`, textEl, '#b35c00', '#fff8f0', '#b35c00');
     } else {
-      applySummary(post, summary, textEl);
+      applySummary(post, `✓ ${score}/100 — LEGIT — ${summary}`, textEl, '#0a8a3c', '#f0f7f0', '#0a8a3c');
     }
   } catch (err) {
     console.error('[BS Detector]', err);
@@ -186,8 +190,8 @@ function applyRewrite(post, rewrite, originalHTML, textEl) {
   textEl.insertAdjacentElement('afterend', toggle);
 }
 
-// ——— Valuable: show a short summary above the post text ———
-function applySummary(post, summary, textEl) {
+// ——— Mixed/Legit: show a score badge above the post text ———
+function applySummary(post, text, textEl, color, background, borderColor) {
   if (post.querySelector('.bs-summary')) return;
 
   const box = document.createElement('div');
@@ -195,15 +199,15 @@ function applySummary(post, summary, textEl) {
   box.style.cssText = `
     display: block;
     font-size: 12px;
-    color: #555;
-    background: #f0f7f0;
-    border-left: 3px solid #0a8a3c;
+    color: #444;
+    background: ${background};
+    border-left: 3px solid ${borderColor};
     padding: 6px 12px;
     border-radius: 4px;
     margin-bottom: 8px;
     line-height: 1.5;
   `;
-  box.innerHTML = `<strong style="color:#0a8a3c">✓ Valuable</strong> — ${escapeHTML(summary)}`;
+  box.innerHTML = `<strong style="color:${color}">${escapeHTML(text)}</strong>`;
 
   textEl.insertAdjacentElement('beforebegin', box);
 }
