@@ -28,6 +28,27 @@ const SEL = {
     '.feed-shared-actor__sub-description',
     '.update-components-actor__sub-description',
   ],
+
+  media: [
+    '.update-components-image',
+    '.update-components-video',
+    '.update-components-article',
+    '.update-components-document',
+    '.update-components-carousel',
+    '.feed-shared-image',
+    '.feed-shared-article',
+    '.feed-shared-external-video',
+    '.feed-shared-mini-update-v2',
+    '.feed-shared-carousel',
+  ],
+
+  seeMore: [
+    '.feed-shared-inline-show-more-text__see-more-less-toggle',
+    '.feed-shared-text-view__toggle',
+    'button[aria-label*="more"]',
+    'button[aria-label*="plus"]',
+    'button[aria-label*="suite"]',
+  ],
 };
 
 const cache = new Map();
@@ -86,6 +107,17 @@ new MutationObserver((mutations) => {
 
 // ——— Analysis ———
 
+async function expandPost(post) {
+  for (const sel of SEL.seeMore) {
+    const btn = post.querySelector(sel);
+    if (btn) {
+      btn.click();
+      await new Promise(r => setTimeout(r, 300));
+      return;
+    }
+  }
+}
+
 async function analyzeAndReplace(post) {
   const postId = getPostId(post);
   const textEl = findTextElement(post);
@@ -95,6 +127,8 @@ async function analyzeAndReplace(post) {
     displayResult(post, cache.get(postId), textEl);
     return;
   }
+
+  await expandPost(post);
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -128,12 +162,20 @@ function displayResult(post, result, textEl) {
 
 // ——— DOM updates ———
 
+function setMediaVisibility(post, visible) {
+  const display = visible ? '' : 'none';
+  for (const sel of SEL.media) {
+    post.querySelectorAll(sel).forEach(el => el.style.display = display);
+  }
+}
+
 function applyRewrite(post, rewrite, originalHTML, textEl) {
   textEl.innerHTML = `
     <span style="display:block;font-style:italic;color:#444;background:#fff8f7;
       border-left:3px solid #cc1100;padding:10px 14px;border-radius:4px;line-height:1.6;
     ">${escapeHTML(rewrite)}</span>
   `;
+  setMediaVisibility(post, false);
 
   if (post.querySelector('.bs-see-original')) return;
 
@@ -149,7 +191,8 @@ function applyRewrite(post, rewrite, originalHTML, textEl) {
   toggle.addEventListener('click', () => {
     showingOriginal = !showingOriginal;
     if (showingOriginal) {
-      textEl.innerHTML   = originalHTML;
+      textEl.innerHTML = originalHTML;
+      setMediaVisibility(post, true);
       toggle.textContent = 'Hide original post';
     } else {
       applyRewrite(post, rewrite, originalHTML, textEl);
