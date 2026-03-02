@@ -23,50 +23,66 @@ const SEL = {
     '.update-components-actor__description',
     '.feed-shared-actor__description',
   ],
+
+  adLabel: [
+    '.feed-shared-actor__sub-description',
+    '.update-components-actor__sub-description',
+  ],
 };
 
 const cache = new Map();
 
+// ——— Queue (4s between API calls to stay within Groq free tier) ———
+
+const queue = [];
+let processing = false;
+
+function enqueue(post) {
+  const postId = getPostId(post);
+  if (cache.has(postId)) return;
+  if (queue.some(p => getPostId(p) === postId)) return;
+  queue.push(post);
+  if (!processing) processNext();
+}
+
+async function processNext() {
+  if (queue.length === 0) { processing = false; return; }
+  processing = true;
+  await analyzeAndReplace(queue.shift());
+  setTimeout(processNext, 4000);
+}
+
+// ——— Viewport observer ———
+
+const viewportObserver = new IntersectionObserver((entries) => {
+  for (const { isIntersecting, target } of entries) {
+    if (!isIntersecting) continue;
+    viewportObserver.unobserve(target);
+    enqueue(target);
+  }
+}, { threshold: 0.5 });
+
+function observe(post) {
+  if (isAd(post)) return;
+  if (post.closest('.comments-comment-item, .comments-comments-list, .comments-comment-entity')) return;
+  if (post.dataset.urn && !post.dataset.urn.startsWith('urn:li:activity:')) return;
+  if (cache.has(getPostId(post))) return;
+  viewportObserver.observe(post);
+}
+
 // ——— Init ———
 
-document.querySelectorAll(SEL.post).forEach(addAnalyzeButton);
+document.querySelectorAll(SEL.post).forEach(observe);
 
 new MutationObserver((mutations) => {
   for (const { addedNodes } of mutations) {
     for (const node of addedNodes) {
       if (node.nodeType !== Node.ELEMENT_NODE) continue;
-      if (node.matches?.(SEL.post)) addAnalyzeButton(node);
-      node.querySelectorAll?.(SEL.post).forEach(addAnalyzeButton);
+      if (node.matches?.(SEL.post)) observe(node);
+      node.querySelectorAll?.(SEL.post).forEach(observe);
     }
   }
 }).observe(document.body, { childList: true, subtree: true });
-
-// ——— Button injection ———
-
-function addAnalyzeButton(post) {
-  if (post.closest('.comments-comment-item, .comments-comments-list, .comments-comment-entity')) return;
-  if (post.dataset.urn && !post.dataset.urn.startsWith('urn:li:activity:')) return;
-  if (post.querySelector('.bs-analyze-btn')) return;
-
-  const textEl = findTextElement(post);
-  if (!textEl) return;
-
-  const btn = document.createElement('button');
-  btn.className    = 'bs-analyze-btn';
-  btn.textContent  = '💩 Analyze';
-  btn.style.cssText = `
-    display: block; margin-bottom: 8px; background: none;
-    border: 1px solid #d0d0d0; border-radius: 12px;
-    padding: 3px 12px; font-size: 12px; color: #777;
-    cursor: pointer; transition: border-color 0.15s, color 0.15s;
-  `;
-
-  btn.addEventListener('mouseenter', () => { btn.style.borderColor = '#cc1100'; btn.style.color = '#cc1100'; });
-  btn.addEventListener('mouseleave', () => { btn.style.borderColor = '#d0d0d0'; btn.style.color = '#777'; });
-  btn.addEventListener('click', () => analyzeAndReplace(post));
-
-  textEl.insertAdjacentElement('beforebegin', btn);
-}
 
 // ——— Analysis ———
 
@@ -80,9 +96,6 @@ async function analyzeAndReplace(post) {
     return;
   }
 
-  const btn = post.querySelector('.bs-analyze-btn');
-  if (btn) { btn.textContent = '⏳ Analyzing...'; btn.disabled = true; }
-
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'ANALYZE_POST',
@@ -92,18 +105,15 @@ async function analyzeAndReplace(post) {
 
     if (!response.success) {
       console.error('[BS Detector] API error:', response.error);
-      if (btn) { btn.textContent = '⚠️ Error'; btn.disabled = false; }
       return;
     }
 
     const { verdict, rewrite, summary } = response.result;
     const result = { verdict, rewrite, summary, originalHTML: textEl.innerHTML };
     cache.set(postId, result);
-    if (btn) btn.remove();
     displayResult(post, result, textEl);
   } catch (err) {
     console.error('[BS Detector]', err);
-    if (btn) { btn.textContent = '⚠️ Error'; btn.disabled = false; }
   }
 }
 
@@ -166,6 +176,11 @@ function applySummary(post, summary, textEl) {
 }
 
 // ——— Helpers ———
+
+function isAd(post) {
+  const label = pickFirst(post, SEL.adLabel)?.toLowerCase() ?? '';
+  return label.includes('sponsored') || label.includes('promoted') || label.includes('sponsorisé');
+}
 
 function findTextElement(post) {
   for (const sel of SEL.postText) {
