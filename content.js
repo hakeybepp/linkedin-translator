@@ -40,15 +40,12 @@ const SEL = {
     '.feed-shared-external-video',
     '.feed-shared-mini-update-v2',
     '.feed-shared-carousel',
-  ],
+  ].join(', '),
 
   seeMore: [
     '.feed-shared-inline-show-more-text__see-more-less-toggle',
     '.feed-shared-text-view__toggle',
-    'button[aria-label*="more"]',
-    'button[aria-label*="plus"]',
-    'button[aria-label*="suite"]',
-  ],
+  ].join(', '),
 };
 
 const cache = new Map();
@@ -56,12 +53,13 @@ const cache = new Map();
 // ——— Queue (4s between API calls to stay within Groq free tier) ———
 
 const queue = [];
+const queued = new Set();
 let processing = false;
 
 function enqueue(post) {
   const postId = getPostId(post);
-  if (cache.has(postId)) return;
-  if (queue.some(p => getPostId(p) === postId)) return;
+  if (cache.has(postId) || queued.has(postId)) return;
+  queued.add(postId);
   queue.push(post);
   if (!processing) processNext();
 }
@@ -69,7 +67,9 @@ function enqueue(post) {
 async function processNext() {
   if (queue.length === 0) { processing = false; return; }
   processing = true;
-  await analyzeAndReplace(queue.shift());
+  const post = queue.shift();
+  queued.delete(getPostId(post));
+  await analyzeAndReplace(post);
   setTimeout(processNext, 4000);
 }
 
@@ -108,13 +108,10 @@ new MutationObserver((mutations) => {
 // ——— Analysis ———
 
 async function expandPost(post) {
-  for (const sel of SEL.seeMore) {
-    const btn = post.querySelector(sel);
-    if (btn) {
-      btn.click();
-      await new Promise(r => setTimeout(r, 300));
-      return;
-    }
+  const btn = post.querySelector(SEL.seeMore);
+  if (btn) {
+    btn.click();
+    await new Promise(r => setTimeout(r, 300));
   }
 }
 
@@ -163,10 +160,7 @@ function displayResult(post, result, textEl) {
 // ——— DOM updates ———
 
 function setMediaVisibility(post, visible) {
-  const display = visible ? '' : 'none';
-  for (const sel of SEL.media) {
-    post.querySelectorAll(sel).forEach(el => el.style.display = display);
-  }
+  post.querySelectorAll(SEL.media).forEach(el => el.style.display = visible ? '' : 'none');
 }
 
 function applyRewrite(post, rewrite, originalHTML, textEl) {
@@ -225,21 +219,19 @@ function isAd(post) {
   return label.includes('sponsored') || label.includes('promoted') || label.includes('sponsorisé');
 }
 
-function findTextElement(post) {
-  for (const sel of SEL.postText) {
-    const el = post.querySelector(sel);
+function pickFirstEl(root, selectors) {
+  for (const sel of selectors) {
+    const el = root.querySelector(sel);
     if (el?.innerText.trim()) return el;
   }
   return null;
 }
 
-function pickFirst(el, selectors) {
-  for (const sel of selectors) {
-    const text = el.querySelector(sel)?.innerText.trim();
-    if (text) return text;
-  }
-  return null;
+function pickFirst(root, selectors) {
+  return pickFirstEl(root, selectors)?.innerText.trim() ?? null;
 }
+
+const findTextElement = (post) => pickFirstEl(post, SEL.postText);
 
 function findAuthor(post) {
   return {
